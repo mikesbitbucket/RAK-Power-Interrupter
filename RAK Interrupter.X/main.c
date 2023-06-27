@@ -29,8 +29,19 @@
     TOTAL LIABILITY ON ALL CLAIMS RELATED TO THE SOFTWARE WILL NOT 
     EXCEED AMOUNT OF FEES, IF ANY, YOU PAID DIRECTLY TO MICROCHIP FOR 
     THIS SOFTWARE.
+ * 
+ * 
+ * RAK Power Supply Interrupter
 */
 #include "mcc_generated_files/system/system.h"
+#include "misc.h"
+#include "global_defs.h"
+
+
+uint16_t SupplyVoltage;
+uint8_t i,j;
+uint16_t delay;
+
 
 /*
     Main application
@@ -45,19 +56,66 @@ int main(void)
     // Use the following macros to: 
 
     // Enable the Global High Interrupts 
-    //INTERRUPT_GlobalInterruptHighEnable(); 
+    INTERRUPT_GlobalInterruptHighEnable(); 
 
     // Disable the Global High Interrupts 
     //INTERRUPT_GlobalInterruptHighDisable(); 
 
     // Enable the Global Low Interrupts 
-    //INTERRUPT_GlobalInterruptLowEnable(); 
+    INTERRUPT_GlobalInterruptLowEnable(); 
 
     // Disable the Global Low Interrupts 
     //INTERRUPT_GlobalInterruptLowDisable(); 
+    
+    
+    Timer1_Initialize();  // Need to do this again otherwise strange results on reset....
+    Timer1_OverflowCallbackRegister(IncSysTick); // Set the Timer Int Callback
+    ADC_SetADIInterruptHandler(A2DIntHandler);  // Set the callback for A2D interrupt
 
+    // Start the Sys Timer
+    Timer1_Start();
+    
+    // Wiggle the LEDs
+    for(i = 0; i <10; i++)
+    {
+        GRNLED_SetHigh();
+        REDLED_SetLow();
+        //__delay_ms(100);
+        while(GetSysTick() <= 10) continue;
+        ClearSysTick();
+        //for(delay=0; delay < 40000; delay++) continue;
+        GRNLED_SetLow();
+        REDLED_SetHigh();
+        //__delay_ms(100);
+        while(GetSysTick() <= 10) continue;
+        ClearSysTick();
+    }
+    REDLED_SetLow();
+    ClearSysTick();
+            
+    // Turn on the supplies
+    TurnOn5v();
+    TurnOnBat();
+    
+    // We may want to wait a few ms for power to come up, and then get current
+    // states, voltages, etc.
+    
+    //__delay_ms(30);
+    
+    //SWDTEN = 1; // Start the Watch Dog Timer
 
+    DAC2_SetOutput(100);  // Set initial levels of the DACs
+    DAC3_SetOutput(100);
+            
+            
     while(1)
     {
+        DoHeartBeat(); // Do all the hearbeat related stuff
+        CheckCurrentMonitors(); // See if we are transmitting
+        
+        // Need to add:
+        // Tracking of current levels to set the threshold on the DACs
+        
+        //PetTheDog();  // Clear the Watch Dog Timer
     }    
 }
