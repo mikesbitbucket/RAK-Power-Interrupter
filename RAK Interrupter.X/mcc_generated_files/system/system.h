@@ -45,6 +45,7 @@
 #include "../dac/dac2.h"
 #include "../dac/dac3.h"
 #include "../fvr/fvr.h"
+#include "../opa/opa2.h"
 #include "../timer/tmr1.h"
 #include "../system/interrupt.h"
 

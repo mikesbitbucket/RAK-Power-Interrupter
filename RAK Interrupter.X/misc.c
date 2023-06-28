@@ -68,6 +68,8 @@ static uint16_t SupplyVoltage = 0;  // This is the VCC voltage in mV - Rem - it 
 static uint16_t A2D_Array[3]; // stores the latest A2D readings for the current monitor and Supply Voltage
 static uint16_t Power_tmr;
 
+uint32_t Average5VCurrent = 0, AverageBatCurrent = 0;  // Long term averages of the current monitors
+
 enum A2D_States {
     READ_5V = 0,
     READ_BAT = 1,
@@ -235,6 +237,10 @@ void DoHeartBeat()
             LED_Heartbeat_tmr = 0;
             
             // Add some stuff to check the dip switches and set stuff accordingly - only needs t be done once in while
+            
+            
+            // Update the DAC Threshold
+            SetNew5VDACThreshold();
         }
         
         // See if we want to do a new A2D
@@ -324,6 +330,7 @@ void A2DIntHandler(void)
         case READ_5V:
             // stuff the reading in the array
             A2D_Array[READ_5V] = ADC_GetConversionResult();
+            DoLongTermAverage5v(A2D_Array[READ_5V]);  // Send current result to long term averager..
             A2D_State = READ_BAT; // Move to next state so next conversion is next channel
             break;
             
@@ -403,6 +410,63 @@ void TurnOnBat(void)
 void TurnOffBat(void)
 {
     CONTROLBAT_SetLow();
+}
+
+
+// *****************************************************************************
+
+/** 
+  @Function
+    DoLongTermAverage5v 
+
+  @Summary
+ * Does a running long term average of the 5V current line
+
+  @Remarks
+ *  Long term average of the 5v current monitor line
+ * Using 32 bit numbers - upper 16 bits are the 'integer' part, the lower 16 are the fractional part
+ * Doing this to speed up math and not use floating point
+ * Idea is to take current reading and difference it to long term average, and then add/subtract a little bit of the
+ * difference back to the long term average. Should simulate a simple RC filter.
+ */
+void DoLongTermAverage5v(uint16_t currentA2D)
+{
+    uint32_t ShiftedCurrentA2D;
+    
+    ShiftedCurrentA2D = (uint32_t)(currentA2D) << 16;  // Move to upper bits.
+    
+    if(ShiftedCurrentA2D >= Average5VCurrent)
+    {
+        // We are above - so add to current. Doing with this to avoid signed math
+        ShiftedCurrentA2D = ShiftedCurrentA2D - Average5VCurrent;  // This is now the difference
+        ShiftedCurrentA2D = ShiftedCurrentA2D >> AVERAGER_TIME_CONSTANT; // This now a fraction of the original difference
+        Average5VCurrent += ShiftedCurrentA2D;  // add this to the running total
+    }
+    else
+    {
+        // We are below - so subtract from current. Doing with this to avoid signed math
+        ShiftedCurrentA2D = Average5VCurrent - ShiftedCurrentA2D;  // This is now the difference
+        ShiftedCurrentA2D = ShiftedCurrentA2D >> AVERAGER_TIME_CONSTANT; // This now a fraction of the original difference
+        Average5VCurrent -= ShiftedCurrentA2D;  // subtract this from the running total
+    }
+}
+
+
+// *****************************************************************************
+/** 
+  @Function
+    SetNew5VDACThreshold 
+
+  @Summary
+ * Sets a new 8 bit DAC threshold based on the current long term average + some delta
+
+  @Remarks
+ *  The amount over the long term average to set the DAC trip threshold will depend on the
+ * dip switch settings
+ */
+void SetNew5VDACThreshold(void)
+{
+    DAC2_SetOutput( (uint8_t)(Average5VCurrent >>20) + 50);  // we need to make this dependant on switch and some other algorithm
 }
 
 // *****************************************************************************

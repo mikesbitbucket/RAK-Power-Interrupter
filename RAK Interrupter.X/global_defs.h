@@ -32,7 +32,13 @@ extern "C" {
 #define LORA_DEFAULT_TIMEOUT 3000  // 30000 = 5 minutes if no LoRa we will pull the plug
 #define LORA_POWER_OFF_TIME 200 // pull power for 2 seconds
     
-    
+#define AVERAGER_TIME_CONSTANT  8  // This is like the time constant of the averaging filter. This is how many shifts (divide / 2)
+                                    // we reduce any difference in the current reading to long term average
+                                    // a value of 10 means we take 1/1024th of the difference on each calculation
+                                    // so with a 10ms loop, it will take about 10 seconds to settle to 99% with a step change.
+                                    // 11 would be 1/2048 so ~20 seconds, etc.
+                                    // max is 15
+                                    // I settled on 8 which give about a 30 second period to settle for a step change
 
 #ifdef	__cplusplus
 }

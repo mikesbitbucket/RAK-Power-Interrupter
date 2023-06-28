@@ -43,6 +43,7 @@ void SYSTEM_Initialize(void)
     DAC2_Initialize();
     DAC3_Initialize();
     FVR_Initialize();
+    OPA2_Initialize();
     Timer1_Initialize();
     INTERRUPT_Initialize();
 }

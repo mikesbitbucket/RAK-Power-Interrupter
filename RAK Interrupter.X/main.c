@@ -75,6 +75,8 @@ int main(void)
     // Start the Sys Timer
     Timer1_Start();
     
+    //DAC2_SetOutput(0);
+    
     // Wiggle the LEDs
     for(i = 0; i <10; i++)
     {
@@ -87,7 +89,9 @@ int main(void)
         GRNLED_SetLow();
         REDLED_SetHigh();
         //__delay_ms(100);
+//        DAC2_SetOutput(DAC2_GetOutput() + 32);
         while(GetSysTick() <= 10) continue;
+//        DAC2_SetOutput(DAC2_GetOutput() +32);
         ClearSysTick();
     }
     REDLED_SetLow();
