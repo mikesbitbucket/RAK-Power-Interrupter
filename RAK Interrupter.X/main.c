@@ -106,7 +106,7 @@ int main(void)
     
     //__delay_ms(30);
     
-    //SWDTEN = 1; // Start the Watch Dog Timer
+    SWDTEN = 1; // Start the Watch Dog Timer
 
     DAC2_SetOutput(100);  // Set initial levels of the DACs
     DAC3_SetOutput(100);
@@ -120,6 +120,6 @@ int main(void)
         // Need to add:
         // Tracking of current levels to set the threshold on the DACs
         
-        //PetTheDog();  // Clear the Watch Dog Timer
+        PetTheDog();  // Clear the Watch Dog Timer
     }    
 }

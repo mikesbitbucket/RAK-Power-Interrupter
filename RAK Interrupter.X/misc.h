@@ -66,6 +66,9 @@ void PetTheDog(void);
 void DoLongTermAverage5v(uint16_t currentA2D);
 void SetNew5VDACThreshold(void);
 
+void DoLongTermAverageBat(uint16_t currentA2D);
+void SetNewBatDACThreshold(void);
+
 void CheckCurrentMonitors(void);
 void ResetLoRaTimer(void);
 void PullThePlug(void);

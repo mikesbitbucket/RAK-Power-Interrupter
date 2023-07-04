@@ -58,24 +58,39 @@
   @Remarks
     Any additional remarks
  */
-static uint16_t SysTick = 0;
-static uint16_t Heartbeat_tmr = 0;
-static uint8_t LED_Heartbeat_tmr = 0, A2D_tmr = 0;
-static uint24_t LoRa_tmr = 0; // This gives us max of 46 hours with 10ms tic for timeout
-static uint24_t LoRa_Timeout = LORA_DEFAULT_TIMEOUT;
-static uint16_t SupplyVoltage = 0;  // This is the VCC voltage in mV - Rem - it is through a Schottky diode
+uint16_t SysTick = 0;
+uint16_t Heartbeat_tmr = 0;
+uint8_t LED_Heartbeat_tmr = 0, A2D_tmr = 0;
+uint24_t LoRa_tmr = 0; // This gives us max of 46 hours with 10ms tic for timeout
+uint24_t LoRa_Current_Timeout = LORA_CURRENT_DEFAULT_TIMEOUT;
+uint24_t LoRa_Time_Timeout = LORA_TIME_DEFAULT_TIMEOUT;
+uint16_t SupplyVoltage = 0;  // This is the VCC voltage in mV - Rem - it is through a Schottky diode
 
-static uint16_t A2D_Array[3]; // stores the latest A2D readings for the current monitor and Supply Voltage
-static uint16_t Power_tmr;
+uint16_t A2D_Array[3]; // stores the latest A2D readings for the current monitor and Supply Voltage
+uint16_t Power_tmr;
 
 uint32_t Average5VCurrent = 0, AverageBatCurrent = 0;  // Long term averages of the current monitors
 
-enum A2D_States {
+uint8_t DAC_5V_Offset = 50;  // Set to 50 - this will get set to dipswitch base amount on first heartbeat tic
+uint8_t DAC_BAT_Offset = 50;  // Set to 50 - this will get set to dipswitch base amount on first heartbeat tic
+
+enum A2D_States
+{
     READ_5V = 0,
     READ_BAT = 1,
     READ_SUPPLY = 2,
 };
-static uint8_t A2D_State = 0;  // What channel are we reading
+
+enum Reset_Basis
+{
+    TIME_BASED = 0,
+    CURRENT_BASED = 1
+    
+};
+
+uint8_t A2D_State = 0;  // What channel are we reading
+bool ResetTimerMode = CURRENT_BASED;
+
 
 /* ************************************************************************** */
 /* ************************************************************************** */
@@ -225,9 +240,14 @@ uint16_t GetSysTick(void)
 
 void DoHeartBeat()
 {
-    // Heartbeat check
-    if(GetSysTick() != Heartbeat_tmr)  // this is simpler with 1 tick per heartbeat - Timer 0 is set to 10 ms
+        
+    if(GetSysTick() != Heartbeat_tmr)  // this is simpler with 1 tick per heartbeat - Timer 1 is set to 10 ms
     {
+        // Note - this loop get run every ~10ms
+        // other things in here can run slower depening on their timer checks, but this inner loop is run every 10ms
+        
+        /****************************************************************************/
+        // Heartbeat check
         Heartbeat_tmr = GetSysTick(); // get new time val
         // do the LED heartbeat check
         LED_Heartbeat_tmr++;
@@ -236,14 +256,56 @@ void DoHeartBeat()
             GRNLED_Toggle(); // Toggle Heartbeat light
             LED_Heartbeat_tmr = 0;
             
+            /*    Read the Dip Switches     */
             // Add some stuff to check the dip switches and set stuff accordingly - only needs t be done once in while
+            if(1 == AFU7_GetValue())
+            {
+                // This is default config (switch open - we want the reset timer for power based on monitoring current pulses
+                ResetTimerMode = CURRENT_BASED;
+            }
+            else
+            {
+                // We are simply on a timer - time is based on AFU6 & AFU5
+                ResetTimerMode = TIME_BASED;
+            }
             
-            
-            // Update the DAC Threshold
+            uint8_t i;
+            i = ((uint8_t)(PORTC >> 1) & 0x03); // shift bits to lower 2 and mask others
+            i = i ^ 0x03; // invert the bits - when switch is 'ON' it reads as a zero...
+            switch(i)
+            {
+                case 0:  // default AFU 5 & 6 - both off or open
+                {
+                    LoRa_Time_Timeout = LORA_TIME_RESET_0;
+                    break;
+                }
+                case 1:
+                {
+                    LoRa_Time_Timeout = LORA_TIME_RESET_1;
+                    break;
+                }
+                case 2:
+                {
+                    LoRa_Time_Timeout = LORA_TIME_RESET_2;
+                    break;
+                }
+                case 3:
+                {
+                    LoRa_Time_Timeout = LORA_TIME_RESET_3;
+                    break;
+                }
+                default:
+                    
+                    break;
+            } // end of switch
+            /*******************************************************************/
+            // Update the DAC Threshold - this will be done every 500ms with LED change of state
             SetNew5VDACThreshold();
+            SetNewBatDACThreshold();
         }
         
-        // See if we want to do a new A2D
+        /****************************************************************************/
+        // See if we want to do a new A2D - typically every 20ms
         A2D_tmr++;
         if(A2D_tmr >= A2D_UPDATE_INTERVAL)
         {
@@ -252,10 +314,24 @@ void DoHeartBeat()
             DoA2D();
         }
         
-        if(LoRa_tmr > LoRa_Timeout)
+        /****************************************************************************/
+        // Now test for if we are time based for pulling the plug on power, or timer based with current exceeding a threshold
+        if(ResetTimerMode == CURRENT_BASED)
         {
-            // we have exceed the time for a current pulse that would be a LoRa transmission, pull the plug
-            PullThePlug();
+            if(LoRa_tmr > LoRa_Current_Timeout)
+            {
+                // we have exceed the time for a current pulse that would be a LoRa transmission, pull the plug
+                PullThePlug();
+            }
+        }
+        else
+        {
+            // we are purely timer based
+            if(LoRa_tmr > LoRa_Time_Timeout)
+            {
+                // we are over our time - pull this plug
+                PullThePlug();
+            }
         }
     }  // End if
 }  // End Heartbeat
@@ -280,8 +356,7 @@ void DoA2D()
 {
     // If time is up, set a channel and start another conversion
     // Note - State will get changed in the A2D Interrupt handler
-    switch (A2D_State)
-            
+    switch (A2D_State)      
     {
         case READ_5V:
             ADC_SelectContext(0);  // Use FVR for Ref, select channel
@@ -337,6 +412,7 @@ void A2DIntHandler(void)
         case READ_BAT:
             // stuff the reading in the array
             A2D_Array[READ_BAT] = ADC_GetConversionResult();
+            DoLongTermAverageBat(A2D_Array[READ_BAT]);  // Send current result to long term averager..
             A2D_State = READ_SUPPLY; // Move to next state so next conversion is next channel
             break;   
             
@@ -432,7 +508,7 @@ void TurnOffBat(void)
 void DoLongTermAverage5v(uint16_t currentA2D)
 {
     uint32_t ShiftedCurrentA2D;
-    
+    // this takes about 5 us to run
     ShiftedCurrentA2D = (uint32_t)(currentA2D) << 16;  // Move to upper bits.
     
     if(ShiftedCurrentA2D >= Average5VCurrent)
@@ -452,6 +528,45 @@ void DoLongTermAverage5v(uint16_t currentA2D)
 }
 
 
+
+// *****************************************************************************
+
+/** 
+  @Function
+    DoLongTermAverageBat 
+
+  @Summary
+ * Does a running long term average of the 5V current line
+
+  @Remarks
+ *  Long term average of the Battery current monitor line
+ * Using 32 bit numbers - upper 16 bits are the 'integer' part, the lower 16 are the fractional part
+ * Doing this to speed up math and not use floating point
+ * Idea is to take current reading and difference it to long term average, and then add/subtract a little bit of the
+ * difference back to the long term average. Should simulate a simple RC filter.
+ */
+void DoLongTermAverageBat(uint16_t currentA2D)
+{
+    uint32_t ShiftedCurrentA2D;
+    // this takes about 5 us to run
+    ShiftedCurrentA2D = (uint32_t)(currentA2D) << 16;  // Move to upper bits.
+    
+    if(ShiftedCurrentA2D >= AverageBatCurrent)
+    {
+        // We are above - so add to current. Doing with this to avoid signed math
+        ShiftedCurrentA2D = ShiftedCurrentA2D - AverageBatCurrent;  // This is now the difference
+        ShiftedCurrentA2D = ShiftedCurrentA2D >> AVERAGER_TIME_CONSTANT; // This now a fraction of the original difference
+        AverageBatCurrent += ShiftedCurrentA2D;  // add this to the running total
+    }
+    else
+    {
+        // We are below - so subtract from current. Doing with this to avoid signed math
+        ShiftedCurrentA2D = AverageBatCurrent - ShiftedCurrentA2D;  // This is now the difference
+        ShiftedCurrentA2D = ShiftedCurrentA2D >> AVERAGER_TIME_CONSTANT; // This now a fraction of the original difference
+        AverageBatCurrent -= ShiftedCurrentA2D;  // subtract this from the running total
+    }
+}
+
 // *****************************************************************************
 /** 
   @Function
@@ -466,7 +581,24 @@ void DoLongTermAverage5v(uint16_t currentA2D)
  */
 void SetNew5VDACThreshold(void)
 {
-    DAC2_SetOutput( (uint8_t)(Average5VCurrent >>20) + 50);  // we need to make this dependant on switch and some other algorithm
+    DAC2_SetOutput( (uint8_t)(Average5VCurrent >> 20) + DAC_5V_Offset);  // we need to make this dependant on switch and some other algorithm
+}
+
+// *****************************************************************************
+/** 
+  @Function
+    SetNewBatDACThreshold 
+
+  @Summary
+ * Sets a new 8 bit DAC threshold based on the current long term average + some delta
+
+  @Remarks
+ *  The amount over the long term average to set the DAC trip threshold will depend on the
+ * dip switch settings
+ */
+void SetNewBatDACThreshold(void)
+{
+    DAC3_SetOutput( (uint8_t)(AverageBatCurrent >> 20) + DAC_BAT_Offset);  // we need to make this dependant on switch and some other algorithm
 }
 
 // *****************************************************************************
@@ -484,6 +616,7 @@ void SetNew5VDACThreshold(void)
 void PetTheDog(void)
 {
     CLRWDT();
+    //WWDT_TimerClear();
 }
 
 
